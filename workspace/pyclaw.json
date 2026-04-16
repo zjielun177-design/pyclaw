@@ -1,0 +1,96 @@
+{
+  "agents": {
+    "defaults": {
+      "workspace": "./workspace/workspace",
+      "model": "deepseek/deepseek-chat",
+      "maxTokens": 262144,
+      "temperature": 0.7,
+      "maxToolIterations": 20
+    }
+  },
+  "channels": {
+    "whatsapp": {
+      "enabled": false,
+      "bridgeUrl": "ws://localhost:3001",
+      "allowFrom": []
+    },
+    "telegram": {
+      "enabled": false,
+      "token": "",
+      "allowFrom": [],
+      "proxy": null
+    },
+    "feishu": {
+      "enabled": true,
+      "appId": "cli_a911a86ff8f8dced",
+      "appSecret": "8oXYWAWgi8i7jBm1ZFi98ccOmiUrFqxX",
+      "encryptKey": "",
+      "verificationToken": "",
+      "allowFrom": []
+    },
+    "openim": {
+      "enabled": true,
+      "userId": "1698163922",
+      "wsAddr": "wss://web.yunzainfo.com/msg_gateway",
+      "apiAddr":"https://web.yunzainfo.com/api"
+    }
+  },
+  "providers": {
+    "anthropic": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "openai": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "openrouter": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "deepseek": {
+      "apiKey": "sk-06535ed527a942a09019267059904f74",
+      "apiBase": "https://api.deepseek.com/v1",
+      "enableTextToolCallFallback": true
+    },
+    "groq": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "zhipu": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "vllm": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    },
+    "gemini": {
+      "apiKey": "",
+      "apiBase": null,
+      "enableTextToolCallFallback": true
+    }
+  },
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 18790
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "apiKey": "",
+        "maxResults": 5
+      }
+    },
+    "exec": {
+      "timeout": 60,
+      "restrictToWorkspace": false
+    }
+  }
+}
