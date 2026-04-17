@@ -16,6 +16,30 @@ import './App.css';
 function removeControlCharacters(str) {
   return str.replace(/[\x00-\x1F\x7F\x80-\x9F]/g, '');
 }
+
+function getDefaultWsUrl() {
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:18790';
+  }
+
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = window.location.hostname || 'localhost';
+  return `${wsProtocol}://${host}:18790`;
+}
+
+function normalizeWsUrl(url) {
+  const trimmed = (url || '').trim();
+  if (!trimmed) {
+    return getDefaultWsUrl();
+  }
+
+  if (/^wss?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `ws://${trimmed}`;
+}
+
 function App() {
   // 全局状态管理
   const [ws, setWs] = useState(null);
@@ -24,7 +48,7 @@ function App() {
   const [initialSkills, setInitialSkills] = useState([]);
   const [initialTools, setInitialTools] = useState([])
   const [inputMessage, setInputMessage] = useState('');
-  const [wsUrl, setWsUrl] = useState('ws://localhost:18790');
+  const [wsUrl, setWsUrl] = useState(() => getDefaultWsUrl());
 
   // WebSocket 连接方法
   const connectWebSocket = () => {
@@ -33,7 +57,9 @@ function App() {
     }
 
     try {
-      const newWs = new WebSocket(wsUrl);
+      const finalWsUrl = normalizeWsUrl(wsUrl);
+      setWsUrl(finalWsUrl);
+      const newWs = new WebSocket(finalWsUrl);
       // 连接成功
       newWs.onopen = () => {
         console.log('WebSocket 连接成功');
@@ -63,12 +89,13 @@ function App() {
         console.log('WebSocket 连接关闭', event);
         setIsConnected(false);
         setWs(null);
-        addMessage(`系统消息：连接已关闭 (${event.code})`, 'system');
+        const reason = event.reason ? `, 原因: ${event.reason}` : '';
+        addMessage(`系统消息：连接已关闭 (${event.code}${reason})`, 'system');
       };
 
-      newWs.onerror = (error) => {
-        console.error('WebSocket 错误', error);
-        addMessage(`系统消息：连接出错 - ${error.message}`, 'system');
+      newWs.onerror = () => {
+        console.error('WebSocket 错误');
+        addMessage(`系统消息：连接出错，请确认地址 ${finalWsUrl} 可访问，且网关已启动`, 'system');
       };
       
     } catch (error) {
