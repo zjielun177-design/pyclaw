@@ -1,27 +1,20 @@
-"""LiteLLM provider implementation for multi-provider support."""
+"""OpenAI-compatible provider implementation used in place of LiteLLM."""
 
 import json
-import os
 import re
 from typing import Any
 
-import litellm
-from litellm import acompletion
+import httpx
 
 from pyclaw.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
 
 class LiteLLMProvider(LLMProvider):
-    """
-    LLM provider using LiteLLM for multi-provider support.
-    
-    Supports OpenRouter, Anthropic, OpenAI, Gemini, and many other providers through
-    a unified interface.
-    """
-    
+    """Compatibility wrapper that talks to OpenAI-compatible chat APIs directly."""
+
     def __init__(
-        self, 
-        api_key: str | None = None, 
+        self,
+        api_key: str | None = None,
         api_base: str | None = None,
         default_model: str = "anthropic/claude-opus-4-5",
         enable_text_tool_call_fallback: bool = True,
@@ -29,43 +22,7 @@ class LiteLLMProvider(LLMProvider):
         super().__init__(api_key, api_base)
         self.default_model = default_model
         self.enable_text_tool_call_fallback = enable_text_tool_call_fallback
-        
-        # Detect OpenRouter by api_key prefix or explicit api_base
-        self.is_openrouter = (
-            (api_key and api_key.startswith("sk-or-")) or
-            (api_base and "openrouter" in api_base)
-        )
-        
-        # Track if using custom endpoint (vLLM, etc.)
-        self.is_vllm = bool(api_base) and not self.is_openrouter
-        
-        # Configure LiteLLM based on provider
-        if api_key:
-            if self.is_openrouter:
-                # OpenRouter mode - set key
-                os.environ["OPENROUTER_API_KEY"] = api_key
-            elif self.is_vllm:
-                # vLLM/custom endpoint - uses OpenAI-compatible API
-                os.environ["OPENAI_API_KEY"] = api_key
-            elif "deepseek" in default_model:
-                os.environ.setdefault("DEEPSEEK_API_KEY", api_key)
-            elif "anthropic" in default_model:
-                os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
-            elif "openai" in default_model or "gpt" in default_model:
-                os.environ.setdefault("OPENAI_API_KEY", api_key)
-            elif "gemini" in default_model.lower():
-                os.environ.setdefault("GEMINI_API_KEY", api_key)
-            elif "zhipu" in default_model or "glm" in default_model or "zai" in default_model:
-                os.environ.setdefault("ZHIPUAI_API_KEY", api_key)
-            elif "groq" in default_model:
-                os.environ.setdefault("GROQ_API_KEY", api_key)
-        
-        if api_base:
-            litellm.api_base = api_base
-        
-        # Disable LiteLLM logging noise
-        litellm.suppress_debug_info = True
-    
+
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -74,98 +31,111 @@ class LiteLLMProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> LLMResponse:
-        """
-        Send a chat completion request via LiteLLM.
-        
-        Args:
-            messages: List of message dicts with 'role' and 'content'.
-            tools: Optional list of tool definitions in OpenAI format.
-            model: Model identifier (e.g., 'anthropic/claude-sonnet-4-5').
-            max_tokens: Maximum tokens in response.
-            temperature: Sampling temperature.
-        
-        Returns:
-            LLMResponse with content and/or tool calls.
-        """
         model = model or self.default_model
-        
-        # For OpenRouter, prefix model name if not already prefixed
-        if self.is_openrouter and not model.startswith("openrouter/"):
-            model = f"openrouter/{model}"
-        
-        # For Zhipu/Z.ai, ensure prefix is present
-        # Handle cases like "glm-4.7-flash" -> "zai/glm-4.7-flash"
-        if ("glm" in model.lower() or "zhipu" in model.lower()) and not (
-            model.startswith("zhipu/") or 
-            model.startswith("zai/") or 
-            model.startswith("openrouter/")
-        ):
-            model = f"zai/{model}"
-        
-        # For vLLM, use hosted_vllm/ prefix per LiteLLM docs
-        # Convert openai/ prefix to hosted_vllm/ if user specified it
-        if self.is_vllm:
-            model = f"hosted_vllm/{model}"
-        
-        # For Gemini, ensure gemini/ prefix if not already present
-        if "gemini" in model.lower() and not model.startswith("gemini/"):
-            model = f"gemini/{model}"
-        
-        kwargs: dict[str, Any] = {
-            "model": model,
+        api_base = self._resolve_api_base(model)
+        payload: dict[str, Any] = {
+            "model": self._normalize_model_name(model, api_base),
             "messages": messages,
-            "max_tokens": max_tokens,
             "temperature": temperature,
         }
-        
-        # Pass api_base directly for custom endpoints (vLLM, etc.)
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
-        
+
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+
         if tools:
-            kwargs["tools"] = tools
-            kwargs["tool_choice"] = "auto"
-        
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        headers = self._build_headers(api_base)
+
         try:
-            response = await acompletion(**kwargs)
-            return self._parse_response(response)
+            async with httpx.AsyncClient(timeout=120) as client:
+                response = await client.post(
+                    f"{api_base.rstrip('/')}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+                response.raise_for_status()
+                return self._parse_response(response.json())
         except Exception as e:
-            # Return error as content for graceful handling
             return LLMResponse(
                 content=f"Error calling LLM: {str(e)}",
                 finish_reason="error",
             )
-    
-    def _parse_response(self, response: Any) -> LLMResponse:
-        """Parse LiteLLM response into our standard format."""
-        choice = response.choices[0]
-        message = choice.message
-        content = message.content
-        
+
+    def _resolve_api_base(self, model: str) -> str:
+        if self.api_base:
+            return self.api_base
+
+        lowered = model.lower()
+        if model.startswith("openrouter/"):
+            return "https://openrouter.ai/api/v1"
+        if "deepseek" in lowered:
+            return "https://api.deepseek.com/v1"
+        if model.startswith("gpt-") or model.startswith("openai/") or "openai" in lowered:
+            return "https://api.openai.com/v1"
+        raise ValueError(
+            "No supported API base resolved for the configured model. "
+            "Please set providers.<name>.apiBase in workspace/pyclaw.json."
+        )
+
+    def _normalize_model_name(self, model: str, api_base: str) -> str:
+        if "openrouter.ai" in api_base and model.startswith("openrouter/"):
+            return model[len("openrouter/"):]
+        if "api.deepseek.com" in api_base and model.startswith("deepseek/"):
+            return model[len("deepseek/"):]
+        if model.startswith("openai/"):
+            return model[len("openai/"):]
+        return model
+
+    def _build_headers(self, api_base: str) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+        }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        if "openrouter.ai" in api_base:
+            headers["HTTP-Referer"] = "https://pyclaw.local"
+            headers["X-Title"] = "pyclaw"
+        return headers
+
+    def _parse_response(self, response: dict[str, Any]) -> LLMResponse:
+        choices = response.get("choices") or []
+        if not choices:
+            return LLMResponse(
+                content="Error calling LLM: empty response choices",
+                finish_reason="error",
+            )
+
+        choice = choices[0]
+        message = choice.get("message") or {}
+        content = message.get("content")
+
         tool_calls: list[ToolCallRequest] = []
-        if hasattr(message, "tool_calls") and message.tool_calls:
-            for tc in message.tool_calls:
-                tool_calls.append(ToolCallRequest(
-                    id=tc.id,
-                    name=tc.function.name,
-                    arguments=self._coerce_tool_arguments(tc.function.arguments),
-                ))
+        for tc in message.get("tool_calls") or []:
+            function = tc.get("function") or {}
+            tool_calls.append(
+                ToolCallRequest(
+                    id=tc.get("id", ""),
+                    name=function.get("name", ""),
+                    arguments=self._coerce_tool_arguments(function.get("arguments", {})),
+                )
+            )
 
         if self.enable_text_tool_call_fallback and not tool_calls:
             content, tool_calls = self._extract_text_tool_calls(content)
-        
-        usage = {}
-        if hasattr(response, "usage") and response.usage:
-            usage = {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
-        
+
+        usage_raw = response.get("usage") or {}
+        usage = {
+            "prompt_tokens": usage_raw.get("prompt_tokens", 0),
+            "completion_tokens": usage_raw.get("completion_tokens", 0),
+            "total_tokens": usage_raw.get("total_tokens", 0),
+        }
+
         return LLMResponse(
             content=content,
-            tool_calls=tool_calls,
-            finish_reason=choice.finish_reason or "stop",
+            tool_calls=[tc for tc in tool_calls if tc.name],
+            finish_reason=choice.get("finish_reason") or "stop",
             usage=usage,
         )
 
@@ -231,5 +201,4 @@ class LiteLLMProvider(LLMProvider):
         return (cleaned or None), parsed_calls
     
     def get_default_model(self) -> str:
-        """Get the default model."""
         return self.default_model

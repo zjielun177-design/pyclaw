@@ -19,6 +19,7 @@ from pyclaw.agent.tools.message import MessageTool
 from pyclaw.agent.tools.spawn import SpawnTool
 from pyclaw.agent.tools.cron import CronTool
 from pyclaw.agent.subagent import SubagentManager
+from pyclaw.db import save_message
 from pyclaw.session.manager import SessionManager
 
 
@@ -146,6 +147,16 @@ class AgentLoop:
         """Stop the agent loop."""
         self._running = False
         logger.info("Agent loop stopping")
+
+    def _persist_message(self, role: str, content: str | None) -> None:
+        """Best-effort persistence to MySQL without breaking chat flow."""
+        if not content:
+            return
+
+        try:
+            save_message(role, content)
+        except Exception as e:
+            logger.warning(f"Failed to persist {role} message to MySQL: {e}")
     
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
         """
@@ -235,7 +246,10 @@ class AgentLoop:
         
         if final_content is None:
             final_content = "I've completed processing but have no response to give."
-        
+
+        self._persist_message("user", msg.content)
+        self._persist_message("assistant", final_content)
+
         # Save to session
         session.add_message("user", msg.content)
         session.add_message("assistant", final_content)
@@ -340,7 +354,10 @@ class AgentLoop:
         
         if final_content is None:
             final_content = "Background task completed."
-        
+
+        self._persist_message("user", f"[System: {msg.sender_id}] {msg.content}")
+        self._persist_message("assistant", final_content)
+
         # Save to session (mark as system message in history)
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)

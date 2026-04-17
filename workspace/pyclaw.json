@@ -22,8 +22,8 @@
     },
     "feishu": {
       "enabled": true,
-      "appId": "cli_a911a86ff8f8dced",
-      "appSecret": "8oXYWAWgi8i7jBm1ZFi98ccOmiUrFqxX",
+      "appId": "cli_a956f75a52badcdb",
+      "appSecret": "YpCKovGunBt0Mqxutt5Dtfi5fMqGl6Vb",
       "encryptKey": "",
       "verificationToken": "",
       "allowFrom": []
@@ -52,7 +52,7 @@
       "enableTextToolCallFallback": true
     },
     "deepseek": {
-      "apiKey": "sk-06535ed527a942a09019267059904f74",
+      "apiKey": "sk-8638cd31ee09455cb42d3de6991c87ea",
       "apiBase": "https://api.deepseek.com/v1",
       "enableTextToolCallFallback": true
     },
