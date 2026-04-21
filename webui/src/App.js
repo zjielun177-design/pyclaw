@@ -13,8 +13,14 @@ import LoginPage from './pages/LoginPage';
 import PrivateRoute from './PrivateRoute';
 import sessionService from './pages/SessionService';
 import './App.css';
+
 function removeControlCharacters(str) {
-  return str.replace(/[\x00-\x1F\x7F\x80-\x9F]/g, '');
+  return Array.from(str)
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return !((code >= 0 && code <= 31) || code === 127 || (code >= 128 && code <= 159));
+    })
+    .join('');
 }
 
 function getDefaultWsUrl() {
@@ -41,16 +47,28 @@ function normalizeWsUrl(url) {
 }
 
 function App() {
-  // 全局状态管理
   const [ws, setWs] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [initialSkills, setInitialSkills] = useState([]);
-  const [initialTools, setInitialTools] = useState([])
+  const [initialTools, setInitialTools] = useState([]);
   const [inputMessage, setInputMessage] = useState('');
   const [wsUrl, setWsUrl] = useState(() => getDefaultWsUrl());
 
-  // WebSocket 连接方法
+  const addMessage = (content, type) => {
+    if (!content) {
+      return;
+    }
+
+    const newMessage = {
+      id: Date.now() + Math.random(),
+      content,
+      type,
+      time: new Date().toLocaleTimeString()
+    };
+    setMessages((prev) => [...prev, newMessage]);
+  };
+
   const connectWebSocket = () => {
     if (ws) {
       ws.close();
@@ -60,66 +78,57 @@ function App() {
       const finalWsUrl = normalizeWsUrl(wsUrl);
       setWsUrl(finalWsUrl);
       const newWs = new WebSocket(finalWsUrl);
-      // 连接成功
+
       newWs.onopen = () => {
-        console.log('WebSocket 连接成功');
         setIsConnected(true);
         setWs(newWs);
-        addMessage('系统消息：已成功连接到服务器', 'system');
+        addMessage('系统消息：已成功连接到服务器。', 'system');
       };
-      // 收到消息
+
       newWs.onmessage = (event) => {
         const jsonString = removeControlCharacters(event.data);
-        console.log(jsonString)
-        const recvMsg = JSON.parse(jsonString)
-        if(recvMsg.id == '1001') {
-          if (recvMsg.result != null) {
-            addMessage(recvMsg.result, 'received');
-          }
+        const recvMsg = JSON.parse(jsonString);
+
+        if (recvMsg.id === '1001' && recvMsg.result != null) {
+          addMessage(recvMsg.result, 'received');
         }
-        if(recvMsg.id == '2001') {
-          setInitialSkills(recvMsg.result)
+        if (recvMsg.id === '2001') {
+          setInitialSkills(recvMsg.result || []);
         }
-        if(recvMsg.id == '3001') {
-          setInitialTools(recvMsg.result)
+        if (recvMsg.id === '3001') {
+          setInitialTools(recvMsg.result || []);
         }
       };
-      // 连接关闭
+
       newWs.onclose = (event) => {
-        console.log('WebSocket 连接关闭', event);
         setIsConnected(false);
         setWs(null);
-        const reason = event.reason ? `, 原因: ${event.reason}` : '';
-        addMessage(`系统消息：连接已关闭 (${event.code}${reason})`, 'system');
+        const reason = event.reason ? `，原因：${event.reason}` : '';
+        addMessage(`系统消息：连接已关闭（${event.code}${reason}）。`, 'system');
       };
 
       newWs.onerror = () => {
-        console.error('WebSocket 错误');
-        addMessage(`系统消息：连接出错，请确认地址 ${finalWsUrl} 可访问，且网关已启动`, 'system');
+        addMessage(`系统消息：连接出错，请确认地址 ${finalWsUrl} 可访问且网关已启动。`, 'system');
       };
-      
     } catch (error) {
-      console.error('创建 WebSocket 失败', error);
       addMessage(`系统消息：创建连接失败 - ${error.message}`, 'system');
     }
   };
 
-  // 断开连接
   const disconnectWebSocket = () => {
     if (ws) {
       ws.close(1000, '客户端主动断开');
     }
   };
 
-  // 发送消息
   const sendMessage = () => {
-    if (!isConnected) {
-      addMessage('系统消息：未连接到服务器，无法发送消息', 'system');
+    if (!isConnected || !ws) {
+      addMessage('系统消息：当前未连接到服务器，无法发送消息。', 'system');
       return;
     }
 
     if (!inputMessage.trim()) {
-      addMessage('系统消息：消息内容不能为空', 'system');
+      addMessage('系统消息：消息内容不能为空。', 'system');
       return;
     }
 
@@ -135,18 +144,18 @@ function App() {
         }
       }));
       addMessage(inputMessage, 'sent');
-      setInputMessage(''); // 清空输入框
+      setInputMessage('');
     } catch (error) {
-      console.error('发送消息失败', error);
       addMessage(`系统消息：发送消息失败 - ${error.message}`, 'system');
     }
   };
-  // 获取skills列表
+
   const getSkills = () => {
-    if (!isConnected) {
-      addMessage('系统消息：未连接到服务器，无法发送消息', 'system');
+    if (!isConnected || !ws) {
+      addMessage('系统消息：当前未连接到服务器，无法获取技能列表。', 'system');
       return;
     }
+
     try {
       ws.send(JSON.stringify({
         id: '2001',
@@ -158,19 +167,17 @@ function App() {
           message: ''
         }
       }));
-      addMessage(inputMessage, 'sent');
-      setInputMessage(''); // 清空输入框
     } catch (error) {
-      console.error('发送消息失败', error);
-      addMessage(`系统消息：发送消息失败 - ${error.message}`, 'system');
+      addMessage(`系统消息：获取技能列表失败 - ${error.message}`, 'system');
     }
   };
-  // 获取tools列表
+
   const getTools = () => {
-    if (!isConnected) {
-      addMessage('系统消息：未连接到服务器，无法发送消息', 'system');
+    if (!isConnected || !ws) {
+      addMessage('系统消息：当前未连接到服务器，无法获取工具列表。', 'system');
       return;
     }
+
     try {
       ws.send(JSON.stringify({
         id: '3001',
@@ -182,40 +189,21 @@ function App() {
           message: ''
         }
       }));
-      addMessage(inputMessage, 'sent');
-      setInputMessage(''); // 清空输入框
     } catch (error) {
-      console.error('发送消息失败', error);
-      addMessage(`系统消息：发送消息失败 - ${error.message}`, 'system');
+      addMessage(`系统消息：获取工具列表失败 - ${error.message}`, 'system');
     }
-  };
-  // 添加消息
-  const addMessage = (content, type) => {
-    if(content == '') {
-      return
-    }
-    const newMessage = {
-      id: Date.now(),
-      content,
-      type, // sent:发送, received:接收, system:系统
-      time: new Date().toLocaleTimeString()
-    };
-    setMessages(prev => [...prev, newMessage]);
   };
 
-  // 清空日志
   const clearLogs = () => {
     setMessages([]);
   };
 
-  // 监听清空日志事件
   useEffect(() => {
     const handleClearLogs = () => clearLogs();
     window.addEventListener('clearLogs', handleClearLogs);
     return () => window.removeEventListener('clearLogs', handleClearLogs);
   }, []);
 
-  // 组件卸载时关闭连接
   useEffect(() => {
     return () => {
       if (ws) {
@@ -226,73 +214,67 @@ function App() {
 
   return (
     <AuthProvider>
-    <Router>
-      <div className="app-wrapper">
-        {/* 侧边栏 - 全局共享 */}
-        <Sidebar
-          isConnected={isConnected}
-          wsUrl={wsUrl}
-        />
+      <Router>
+        <div className="app-wrapper">
+          <Sidebar
+            isConnected={isConnected}
+            wsUrl={wsUrl}
+          />
 
-        {/* 主内容区域 - 路由容器 */}
-        <div className="main-content">
-          <div className="app-container">
-            <Routes>
-              {/* 登录页 */}
-              <Route path="/login" element={<LoginPage />} />
-              {/* 控制台首页（显示智能体状态） */}
-              <Route
-                path="/"
-                element={
-                <PrivateRoute><HomePage isConnected={isConnected} /></PrivateRoute>
-              }
-              />
-              {/* 消息中心放到 /chat */}
-              <Route
-                path="/chat"
-                element={
-                  <PrivateRoute>
-                    <ChatPage
-                    isConnected={isConnected}
-                    sendMessage={sendMessage}
-                    messages={messages}
-                    inputMessage={inputMessage}
-                    setInputMessage={setInputMessage}
-                  />
-                  </PrivateRoute>
-                }
-              />
-              {/* 连接设置 */}
-              <Route
-                path="/settings"
-                element={<PrivateRoute>
-                  <SettingsPage
-                    wsUrl={wsUrl}
-                    setWsUrl={setWsUrl}
-                    isConnected={isConnected}
-                    connectWebSocket={connectWebSocket}
-                    disconnectWebSocket={disconnectWebSocket}
-                  /></PrivateRoute>
-                }
-              />
-              <Route path="/skills" element={<PrivateRoute><SkillManagementPage getSkills={getSkills} initialSkills={initialSkills}/></PrivateRoute>} />
-              <Route path="/tools" element={<PrivateRoute><ToolManagementPage getTools={getTools} initialTools={initialTools}/></PrivateRoute>} />
-              {/* 消息日志 */}
-              <Route
-                path="/logs"
-                element={<PrivateRoute><LogsPage messages={messages} /></PrivateRoute>}
-              />
-
-              {/* 关于页面 */}
-              <Route
-                path="/about"
-                element={<AboutPage />}
-              />
-            </Routes>
+          <div className="main-content">
+            <div className="app-container">
+              <Routes>
+                <Route path="/login" element={<LoginPage />} />
+                <Route
+                  path="/"
+                  element={<PrivateRoute><HomePage isConnected={isConnected} /></PrivateRoute>}
+                />
+                <Route
+                  path="/chat"
+                  element={(
+                    <PrivateRoute>
+                      <ChatPage
+                        isConnected={isConnected}
+                        sendMessage={sendMessage}
+                        messages={messages}
+                        inputMessage={inputMessage}
+                        setInputMessage={setInputMessage}
+                      />
+                    </PrivateRoute>
+                  )}
+                />
+                <Route
+                  path="/settings"
+                  element={(
+                    <PrivateRoute>
+                      <SettingsPage
+                        wsUrl={wsUrl}
+                        setWsUrl={setWsUrl}
+                        isConnected={isConnected}
+                        connectWebSocket={connectWebSocket}
+                        disconnectWebSocket={disconnectWebSocket}
+                      />
+                    </PrivateRoute>
+                  )}
+                />
+                <Route
+                  path="/skills"
+                  element={<PrivateRoute><SkillManagementPage getSkills={getSkills} initialSkills={initialSkills} /></PrivateRoute>}
+                />
+                <Route
+                  path="/tools"
+                  element={<PrivateRoute><ToolManagementPage getTools={getTools} initialTools={initialTools} /></PrivateRoute>}
+                />
+                <Route
+                  path="/logs"
+                  element={<PrivateRoute><LogsPage messages={messages} /></PrivateRoute>}
+                />
+                <Route path="/about" element={<AboutPage />} />
+              </Routes>
+            </div>
           </div>
         </div>
-      </div>
-    </Router>
+      </Router>
     </AuthProvider>
   );
 }
